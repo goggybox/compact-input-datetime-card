@@ -4,7 +4,7 @@ class CompactInputDatetimeCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (this._config && this._card) {
-      const stateObj = hass.states[this._config.entity];
+      const stateObj = hass.states[this._entity];
       if (stateObj) {
         // format time
         let displayTime = stateObj.state;
@@ -29,8 +29,19 @@ class CompactInputDatetimeCard extends HTMLElement {
         }
 
         // update description
-        this._card.querySelector(".description").textContent =
-          this._config.name || stateObj.attributes.friendly_name || "Next Activation";
+        const toggleConfig = this._config.toggle || {};
+        const toggleEntityId = toggleConfig.entity;
+
+        // determine whether on or off
+        let isOn = false;
+        if (toggleEntityId) {
+          const toggleStateObj = hass.states[toggleEntityId];
+          if (toggleStateObj) {
+            const domain = toggleEntityId.split(".")[0];
+            isOn = ["on", "open", "true"].includes(toggleStateObj.state.toLowerCase());
+          }
+        }
+
         // update toggle
         this._updateToggle(hass);
       }
@@ -41,10 +52,12 @@ class CompactInputDatetimeCard extends HTMLElement {
     const toggleWrapper = this._card.querySelector(".toggle-wrapper");
     const iconEl = this._card.querySelector("#toggle-icon");
     const iconWrapper = this._card.querySelector(".toggle-icon-wrapper");
+    const descriptionEl = this._card.querySelector(".description");
+    const datetimeWrapper = this._card.querySelector(".datetime-input-wrapper");
 
     const toggleConfig = this._config.toggle || {};
     const toggleEntityId = toggleConfig.entity;
-    const stateObj = hass.states[this._config.entity];
+    const stateObj = hass.states[this._entity];
     const inputDatetimeIcon = stateObj?.attributes.icon || "mdi:clock-outline";
 
     // vars to store whether toggle is on or off
@@ -61,38 +74,63 @@ class CompactInputDatetimeCard extends HTMLElement {
       }
     }
 
+    // ----- set description -----
+    let displayName = this._config.name; // if only one general name was given
+    if (toggleConfig.on?.name && isOn) {
+      // if two separate names were given for the on state and off state, use them
+      displayName = toggleConfig.on.name;
+    } else if (toggleConfig.off?.name && !isOn) {
+      displayName = toggleConfig.off.name;
+    }
+    if (!displayName) {
+      // no name has been given
+      displayName = stateObj?.attributes.friendly_name || "Next Activation";
+    }
+    if (descriptionEl) {
+      descriptionEl.textContent = displayName;
+    }
+
+    // ----- hide input_datetime when off -----
+    const shouldHide = (isOn && toggleConfig.on?.hide_input_datetime) ||
+      (!isOn && toggleConfig.off?.hide_input_datetime);
+
+    if (datetimeWrapper) {
+      datetimeWrapper.style.display = shouldHide ? "none" : "flex";
+    }
+
     // determine icon and color
-    let icon, iconColor, background;
+    let icon, iconColour, background;
 
     // get toggle config from user
     if (toggleEntityId && toggleStateObj) {
+      let activeConfig = null;
       if (toggleConfig.on !== undefined && toggleConfig.off !== undefined) {
-        // split on/off config
-        const activeConfig = isOn ? toggleConfig.on : toggleConfig.off;
-        icon = activeConfig.icon || toggleStateObj.attributes.icon || inputDatetimeIcon;
-        iconColor = activeConfig.colour || (isOn ? "green" : "red");
+        activeConfig = isOn ? toggleConfig.on : toggleConfig.off;
       } else {
-        // simple config (for both states)
-        icon = toggleConfig.icon || toggleStateObj.attributes.icon || inputDatetimeIcon;
-        iconColor = toggleConfig.colour || (isOn ? "green" : "red");
+        activeConfig = toggleConfig;
       }
 
-      // determine toggle's background colour
-      background = isOn
-        ? (toggleConfig.on?.background || toggleConfig.background || "#bdefbd")
-        : (toggleConfig.off?.background || toggleConfig.background || "linear-gradient(rgba(255,0,0,0.25),rgba(255,0,0,0.25)), var(--card-background-color)");
+      // icon
+      icon = activeConfig.icon || toggleStateObj?.attributes.icon || inputDatetimeIcon;
+      // icon colour
+      iconColour = activeConfig.icon_colour || (isOn ? "green" : "red")
+      // background colour
+      const defaultOnBg = "#bdefbd"
+      const defaultOffBg = "linear-gradient(rgba(255,0,0,0.25), rgba(255,0,0,0.25)), var(--card-background-color)";
+      background = activeConfig.background_colour || (isOn ? defaultOnBg : defaultOffBg);
+
     } else {
 
       // if no toggle config was given, use defaults
       icon = toggleConfig.icon || inputDatetimeIcon;
-      iconColor = toggleConfig.colour || this._iconColour || "var(--secondary-text-color)";
+      iconColour = toggleConfig.icon_colour || this._iconColour || "var(--secondary-text-color)";
       background = "transparent";
     }
 
     // apply everything to the DOM
     if (iconEl) {
       iconEl.icon = icon;
-      iconEl.style.color = iconColor;
+      iconEl.style.color = iconColour;
     }
     if (iconWrapper) {
       iconWrapper.style.background = background;
@@ -124,18 +162,32 @@ class CompactInputDatetimeCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config.entity) {
-      throw new Error("Compact Input Datetime Card: You must provide an entity in the config.");
+    if (!config.input_datetime) {
+      throw new Error("Compact Input Datetime Card: You must provide an 'input_datetime' block in the config.")
     }
-    if (!config.entity.startsWith("input_datetime.")) {
-      throw new Error("Compact Input Datetime Card: The entity must be an input_datetime.");
+    if (!config.input_datetime.entity) {
+      throw new Error("Compact Input Datetime Card: You must specify 'input_datetime.entity'.")
+    }
+    if (!config.input_datetime.entity.startsWith("input_datetime.")) {
+      throw new Error("Compact Input Datetime Card: The entity must be an input_datetime.")
     }
 
-    const bgColour = config.background_colour || "var(--disabled-color)";
+    const entity = config.input_datetime.entity;
+    const cardBgColour = config.background_colour || "var(--card-color)";
+    const cardFontColour = config.font_colour || "var(--secondary-text-color)";
+
+    const inputDatetimeBgColour = config.input_datetime.background_colour || "#f5f5f5";
+    const inputDatetimeFontColour = config.input_datetime.font_colour || cardFontColour;
+
     const iconColour = config.icon_colour || "var(--secondary-text-color)";
+
+    const border = config.border || "1px solid #e0e0e0";
+
     this._iconColour = iconColour;
+    this._inputDatetimeBgColour = inputDatetimeBgColour;
 
     this._config = config;
+    this._entity = entity;
 
     // html
     this.innerHTML = `
@@ -147,9 +199,9 @@ class CompactInputDatetimeCard extends HTMLElement {
             </div>
           </div>
           <div class="content">
-            <div class="bg" style="background: ${bgColour};">
+            <div class="bg" style="background: ${cardBgColour};">
               <div class="overlay">
-                <div class="description" style="padding-left: 30px;">Loading...</div>
+                <div class="description">Loading...</div>
                 <div class="datetime-input-wrapper">
                   <input class="hours-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" />
                   <span class="colon">:</span>
@@ -162,7 +214,7 @@ class CompactInputDatetimeCard extends HTMLElement {
       </div>
     `;
 
-    // styles (unchanged except padding-left is now fixed at 30px)
+    // styles
     const style = document.createElement("style");
     style.textContent = `
       :host {
@@ -176,8 +228,8 @@ class CompactInputDatetimeCard extends HTMLElement {
       .card-container {
         max-width: 500px;
         height: var(--height);
-        background: ${bgColour};
-        border: 1px solid #e0e0e0;
+        background: var(--card-background-color);
+        border: ${border};
         border-radius: 15px;
         margin: 0 auto;
         margin-right: 5px;
@@ -204,7 +256,6 @@ class CompactInputDatetimeCard extends HTMLElement {
         width: 100%;
         height: 100%;
         border-radius: 14px;
-        border: 1px solid #e0e0e0;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -234,8 +285,6 @@ class CompactInputDatetimeCard extends HTMLElement {
         border-radius: var(--icon-border-radius);
         width: 100%;
         height: 100%;
-        border: 1px solid #e0e0e0;
-        background: ${bgColour};
       }
 
       .overlay {
@@ -254,15 +303,16 @@ class CompactInputDatetimeCard extends HTMLElement {
       .description {
         font-weight: bold;
         font-size: 18px;
-        color: ${iconColour};
+        padding-left: 30px;
+        color: ${cardFontColour};
       }
 
       .datetime-input-wrapper {
         display: flex;
         align-items: center;
-        background: #f5f5f5;
+        background: ${inputDatetimeBgColour};
         border-radius: 8px;
-        margin-right: 16px;
+        margin-right: 14px;
         padding: 0 8px;
       }
 
@@ -271,7 +321,7 @@ class CompactInputDatetimeCard extends HTMLElement {
         font: inherit;
         font-size: 14px;
         height: 44px;
-        color: ${iconColour};
+        color: ${inputDatetimeFontColour};
         border: none;
         outline: none;
         width: 30px;
@@ -298,6 +348,7 @@ class CompactInputDatetimeCard extends HTMLElement {
     const hoursInput = this._card.querySelector(".hours-input");
     const minutesInput = this._card.querySelector(".minutes-input");
 
+    // function to take inputted time and apply to the input_datetime
     const applyTime = () => {
       const processField = (input, min, max) => {
         let val = input.value.trim();
@@ -320,12 +371,13 @@ class CompactInputDatetimeCard extends HTMLElement {
       if (hValid && mValid) {
         const timeValue = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:00`;
         this._hass.callService("input_datetime", "set_datetime", {
-          entity_id: this._config.entity,
+          entity_id: this._entity,
           time: timeValue
         });
       }
     };
 
+    // input listeners
     [hoursInput, minutesInput].forEach(input => {
       input.addEventListener("input", (e) => {
         let v = e.target.value.replace(/[^0-9]/g, '');
@@ -334,6 +386,7 @@ class CompactInputDatetimeCard extends HTMLElement {
       });
     });
 
+    // allow the user to press enter to set time
     const handleKeydown = (e) => {
       if (e.key === "Enter") applyTime();
     };
@@ -346,15 +399,29 @@ class CompactInputDatetimeCard extends HTMLElement {
 
   static getStubConfig() {
     return {
-      entity: "input_datetime.example",
-      name: "Example Time",
+      border: "1px solid #e0e0e0",
+      background_colour: "var(--card-background-color)",
+      font_colour: "var(--secondary-text-color)",
+      input_datetime: {
+        entity: "input_datetime.example",
+        background_colour: "#f5f5f5",
+        font_colour: "#727272"
+      },
       toggle: {
         entity: "input_boolean.example",
-        // icon: "mdi:clock",
-        // colour: "#ff0000",
-        // OR
-        // on: { icon: "mdi:check", colour: "green" },
-        // off: { icon: "mdi:close", colour: "red" }
+        on: {
+          icon: "mdi:check",
+          icon_colour: "green",
+          background_colour: "#bdefbd",
+          name: "Enabled"
+        },
+        off: {
+          icon: "mdi:close",
+          icon_colour: "red",
+          background_colour: "#ffbfbf",
+          name: "Disabled",
+          hide_input_datetime: true
+        }
       }
     };
   }
